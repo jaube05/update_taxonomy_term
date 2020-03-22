@@ -1,0 +1,226 @@
+<?php
+/**
+ * @file
+ * Contains update_taxonomy_term.module.
+ */
+
+use Drupal\Core\Database\Database;
+use Drupal\node\Entity\Node;
+use Drupal\Core\Entity\EntityInterface;
+
+/**
+ * Implementing hook_taxonomy_term_update().
+ */
+
+function update_taxonomy_term_entity_delete($entity)
+{
+
+    //For updating nodes on deleting Group scope term
+    if ($entity->getEntityTypeId() == "taxonomy_term" && $entity->get('vid')->getValue()[0]['target_id'] == "group_scope") {
+        $singleScopeArray = [];
+        $groupScopeArray = [];
+        $groupScopeID = $entity->tid->getValue();
+        $connection = \Drupal::database();
+        // Get nodes from database that have the group scope term id that has been changed.
+        $query = $connection->query("SELECT * FROM {node__field_group_scope} WHERE field_group_scope_target_id = :groupScope",
+            [':groupScope' => $groupScopeID[0]['value']]);
+        $result = $query->fetchAll();
+
+        if (!empty($result)) {
+            foreach ($result as $node) {
+                $entity_node = \Drupal\node\Entity\Node::load($node->entity_id);
+                $field_single_scope = $entity_node->field_single_scope;
+                // Loop through the field_single_scope and add to $singleScopeArray
+                foreach ($field_single_scope as $fss) {
+                    if (!in_array($fss, $singleScopeArray)) {
+                        array_push($singleScopeArray, $fss);
+                    }
+                }
+                $field_group_scope = $entity_node->field_group_scope->getValue();
+                $groupScopeTerms = \Drupal::entityTypeManager()->getStorage("taxonomy_term")->
+                loadTree('group_scope');
+                $fieldScopeArr = [];
+                $fieldScope = $entity_node->field_scope->getValue();
+                // Loop through field_scope and add to $groupScopeArray
+                foreach ($fieldScope as $scope) {
+                    if (!in_array($scope, $fieldScopeArr)) {
+                        array_push($fieldScopeArr, $scope['target_id']);
+                    }
+                }
+                foreach ($groupScopeTerms as $term) {
+                    foreach ($field_group_scope as $group) {
+                        if ($term->tid == $group['target_id']) {
+                            // Get list of scopes in chosen group scope
+                            $term_obj = Drupal::entityTypeManager()->getStorage('taxonomy_term')->
+                            load($group['target_id']);
+                            $scopes = $term_obj->get('field_scope_publishing')->getValue();
+                            // Loop through each scope id in the group scope chosen
+                            // and add to field_scope for publishing and viewing
+                            foreach ($scopes as $singleScope) {
+                                $targetArr = $singleScope['target_id'];
+                                // If group scope is already saved in scope else add them
+                                if (!in_array($fieldScopeArr, $targetArr)) {
+                                    array_push($groupScopeArray, $singleScope);
+                                }
+                            }
+                        }
+                    }
+                }
+                $newScopeArray = array_merge($singleScopeArray, $groupScopeArray);
+                $entity_node->set('field_scope', array_merge($newScopeArray));
+                $entity_node->changed->preserve = TRUE;
+                $entity_node->save();
+            }
+        }
+    }
+}
+
+
+function update_taxonomy_term_taxonomy_term_update($term)
+{
+
+    $singleScopeArray = [];
+    $groupScopeArray = [];
+    $groupScopeID = $term->tid->getValue();
+    $connection = \Drupal::database();
+    // Get nodes from database that have the group scope term id that has been changed.
+    $query = $connection->query("SELECT * FROM {node__field_group_scope} WHERE field_group_scope_target_id = :groupScope",
+        [':groupScope' => $groupScopeID[0]['value']]);
+    $result = $query->fetchAll();
+
+    if (!empty($result)) {
+        foreach ($result as $node) {
+            $entity = \Drupal\node\Entity\Node::load($node->entity_id);
+            $field_single_scope = $entity->field_single_scope;
+            // Loop through the field_single_scope and add to $singleScopeArray
+            foreach ($field_single_scope as $fss) {
+                if (!in_array($fss, $singleScopeArray)) {
+                    array_push($singleScopeArray, $fss);
+                }
+            }
+            $field_group_scope = $entity->field_group_scope->getValue();
+            $groupScopeTerms = \Drupal::entityTypeManager()->getStorage("taxonomy_term")->
+            loadTree('group_scope');
+            $fieldScopeArr = [];
+            $fieldScope = $entity->field_scope->getValue();
+            // Loop through field_scope and add to $groupScopeArray
+            foreach ($fieldScope as $scope) {
+                if (!in_array($scope, $fieldScopeArr)) {
+                    array_push($fieldScopeArr, $scope['target_id']);
+                }
+            }
+            foreach ($groupScopeTerms as $term) {
+                foreach ($field_group_scope as $group) {
+                    if ($term->tid == $group['target_id']) {
+                        // Get list of scopes in chosen group scope
+                        $term_obj = Drupal::entityTypeManager()->getStorage('taxonomy_term')->
+                        load($group['target_id']);
+                        $scopes = $term_obj->get('field_scope_publishing')->getValue();
+                        // Loop through each scope id in the group scope chosen
+                        // and add to field_scope for publishing and viewing
+                        foreach ($scopes as $singleScope) {
+                            $targetArr = $singleScope['target_id'];
+                            // If group scope is already saved in scope else add them
+                            if (!in_array($fieldScopeArr, $targetArr)) {
+                                array_push($groupScopeArray, $singleScope);
+                            }
+                        }
+                    }
+                }
+            }
+            $newScopeArray = array_merge($singleScopeArray, $groupScopeArray);
+
+            $entity->set('field_scope', array_merge($newScopeArray));
+            $entity->changed->preserve = TRUE;
+            $entity->save();
+        }
+    }
+}
+
+function update_taxonomy_term_preprocess_node_edit_form(&$variables)
+{
+  //Restricting Group scope based on scope publishing
+  $session = \Drupal::request()->getSession();
+  $uid = \Drupal::currentUser()->id();
+  $scope_publishing = $session->get('act_scope__' . $uid)['scope_publishing'];
+  $group_scope_values = $variables['form']['field_group_scope']['widget']['#options'];
+  foreach ($group_scope_values as $key => $value) {
+    $scope_array_per_group = [];
+    if ($key !== "_none") {
+      $term_obj = Drupal::entityTypeManager()->getStorage('taxonomy_term')->load($key);
+      $scopes = $term_obj->get('field_scope_publishing')->getValue();
+      foreach ($scopes as $singleScope) {
+        array_push($scope_array_per_group, $singleScope['target_id']);
+      }
+    }
+    if (!in_array($scope_array_per_group[0], $scope_publishing)) {
+      unset($variables['form']['field_group_scope']['widget']['#options'][$key]);
+    }
+  }
+}
+
+function update_taxonomy_term_node_presave($node) {
+  if (!isset($_SESSION['batch_update_field_value'])) {
+    // Variables for single scope, group group scope and new combined array for scope.
+    $singleScopeArray = [];
+    $groupScopeArray = [];
+    $newScopeArray = [];
+
+    // For field_single_scopes
+    if ($node->hasField('field_single_scopes')) {
+      $field_single_scope = $node->get('field_single_scopes')->getValue();
+      // Loop through the field_single_scope and add to $singleScopeArray
+      foreach ($field_single_scope as $fss) {
+        if (!in_array($fss, $singleScopeArray)) {
+          array_push($singleScopeArray, $fss);
+        }
+      }
+    }
+    // End field_single_scopes
+
+    // For field_group_scope
+    if ($node->hasField('field_group_scope')) {
+      $field_group_scope = $node->get('field_group_scope')->getValue();
+      $groupScopeTerms = \Drupal::entityTypeManager()->getStorage("taxonomy_term")->
+      loadTree('group_scope');
+      $fieldScopeArr = [];
+      $fieldScope = $node->get('field_scope')->getValue();
+      // Loop through field_scope and add to $groupScopeArray
+      foreach ($fieldScope as $scope) {
+        if (!in_array($scope, $fieldScopeArr)) {
+            array_push($fieldScopeArr, $scope['target_id']);
+        }
+      }
+      foreach ($groupScopeTerms as $term) {
+        foreach ($field_group_scope as $group) {
+          if ($term->tid == $group['target_id']) {
+            // Get list of scopes in chosen group scope
+            $term_obj = Drupal::entityTypeManager()->getStorage('taxonomy_term')->
+            load($group['target_id']);
+            $scopes = $term_obj->get('field_scope_publishing')->getValue();
+
+            // Loop through each scope id in the group scope chosen
+            // and add to field_scope for publishing and viewing
+            foreach ($scopes as $singleScope) {
+              $targetArr = $singleScope['target_id'];
+              // If group scope is already saved in scope else add them
+              if (!in_array($fieldScopeArr, $targetArr)) {
+                array_push($groupScopeArray, $singleScope);
+              }
+            }
+          }
+        }
+      }
+    }
+    // End field_group_scope
+    // add single scope and group scope array together to new scope array
+    // set node field scope to new array
+    $newScopeArray = array_merge($singleScopeArray, $groupScopeArray);
+    if (count($newScopeArray)) {
+      $node->set('field_scope', array_merge($newScopeArray));
+    }
+      // drupal_set_message('Passed here');
+  } else {
+    unset($_SESSION['batch_update_field_value']);
+  }
+}

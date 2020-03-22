@@ -1,0 +1,6 @@
+name: Update taxonomy term
+type: module
+description: 'When taxonomy term is updated, this module will update all nodes using this term.'
+package: Custom
+core: 8.x
+project: update_taxonomy_term
